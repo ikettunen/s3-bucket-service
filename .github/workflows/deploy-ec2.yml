@@ -1,0 +1,62 @@
+# S3 Bucket Service deployment workflow for EC2 self-hosted runner
+# Deploys Node.js service to EC2 and restarts with PM2
+
+name: Deploy S3 Bucket Service to EC2
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup Node.js 22
+      uses: actions/setup-node@v3
+      with:
+        node-version: '22.x'
+        cache: 'npm'
+    
+    - name: Verify Node.js version
+      run: |
+        node --version
+        npm --version
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Deploy to EC2
+      run: |
+        # Backup current version
+        if [ -d ~/s3-bucket-service ]; then
+          cp -r ~/s3-bucket-service ~/s3-bucket-service.backup
+        fi
+        
+        # Copy new files (excluding node_modules and .git)
+        rsync -av --exclude='node_modules' --exclude='.git' --exclude='logs' ./ ~/s3-bucket-service/
+        
+        # Install dependencies in target directory
+        cd ~/s3-bucket-service
+        npm install --production
+        
+        echo "Deployed to ~/s3-bucket-service"
+    
+    - name: Restart service with PM2
+      run: |
+        cd ~/s3-bucket-service
+        pm2 restart s3-bucket-service || pm2 start src/server.js --name s3-bucket-service
+        pm2 save
+    
+    - name: Deployment Summary
+      run: |
+        echo "✅ S3 Bucket Service deployed successfully!"
+        echo "🌐 Service URL: http://51.20.164.143:3009"
+        echo "📁 Deployed to: ~/s3-bucket-service"
+        echo ""
+        echo "PM2 Status:"
+        pm2 list | grep s3-bucket-service
