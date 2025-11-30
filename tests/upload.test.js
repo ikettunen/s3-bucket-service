@@ -22,10 +22,12 @@ describe('Upload Routes', () => {
       expect(response.body.data).toHaveProperty('uploadUrl');
       expect(response.body.data).toHaveProperty('fileUrl');
       expect(response.body.data).toHaveProperty('s3Key');
-      expect(response.body.data).toHaveProperty('soundDataId');
+      expect(response.body.data).toHaveProperty('dataId');
+      expect(response.body.data).toHaveProperty('type');
+      expect(response.body.data.type).toBe('audio');
 
       // Check if SoundData record was created
-      const soundData = await SoundData.findById(response.body.data.soundDataId);
+      const soundData = await SoundData.findById(response.body.data.dataId);
       expect(soundData).toBeTruthy();
       expect(soundData.visitId).toBe(uploadData.visitId);
       expect(soundData.patientId).toBe(uploadData.patientId);
@@ -96,7 +98,9 @@ describe('Upload Routes', () => {
         .expect(200);
 
       expect(response.body.success).toBe(true);
-      expect(response.body.data).toHaveProperty('soundDataId');
+      expect(response.body.data).toHaveProperty('dataId');
+      expect(response.body.data).toHaveProperty('type');
+      expect(response.body.data.type).toBe('audio');
 
       // Check if SoundData was updated
       const updatedSoundData = await SoundData.findById(soundData._id);
@@ -117,7 +121,7 @@ describe('Upload Routes', () => {
         .send(confirmData)
         .expect(404);
 
-      expect(response.body.error).toBe('Sound data record not found');
+      expect(response.body.error).toBe('Data record not found');
     });
   });
 
@@ -167,11 +171,15 @@ describe('Upload Routes', () => {
 
       expect(response.body.success).toBe(true);
       expect(response.body.data).toHaveProperty('overall');
-      expect(response.body.data).toHaveProperty('byStatus');
-      expect(response.body.data).toHaveProperty('byType');
+      expect(response.body.data).toHaveProperty('audio');
+      expect(response.body.data).toHaveProperty('photos');
 
       expect(response.body.data.overall.totalFiles).toBe(2);
       expect(response.body.data.overall.totalSize).toBe(3000);
+      
+      expect(response.body.data.audio.overall.totalFiles).toBe(2);
+      expect(response.body.data.audio.byStatus).toBeDefined();
+      expect(response.body.data.audio.byType).toBeDefined();
     });
   });
 });

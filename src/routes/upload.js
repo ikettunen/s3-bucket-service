@@ -3,19 +3,37 @@ const { v4: uuidv4 } = require('uuid');
 const Joi = require('joi');
 const { generatePresignedUrl, S3_CONFIG } = require('../config/aws');
 const SoundData = require('../models/SoundData');
+const PhotoData = require('../models/PhotoData');
 const logger = require('../utils/logger');
 
 const router = express.Router();
 
+// All allowed file types (audio + images)
+const ALLOWED_FILE_TYPES = [
+  'audio/wav',
+  'audio/mpeg',
+  'audio/ogg',
+  'audio/webm',
+  'image/jpeg',
+  'image/png',
+  'image/jpg',
+  'image/webp'
+];
+
 // Validation schemas
 const presignedUrlSchema = Joi.object({
   fileName: Joi.string().required().min(1).max(255),
-  contentType: Joi.string().valid(...S3_CONFIG.allowedFileTypes).required(),
+  contentType: Joi.string().valid(...ALLOWED_FILE_TYPES).required(),
   visitId: Joi.string().required().min(1),
   patientId: Joi.string().required().min(1),
   staffId: Joi.string().optional(),
-  recordingType: Joi.string().valid('visit_note', 'patient_interview', 'medication_reminder', 'other').default('visit_note'),
-  recordingSource: Joi.string().valid('mobile_app', 'web_app', 'file_upload').default('web_app'),
+  // For audio files
+  recordingType: Joi.string().valid('visit_note', 'patient_interview', 'medication_reminder', 'other').optional(),
+  recordingSource: Joi.string().valid('mobile_app', 'web_app', 'file_upload').default('mobile_app'),
+  // For photo files
+  photoType: Joi.string().valid('wound', 'skin_condition', 'medication', 'patient_id', 'general', 'other').optional(),
+  photoSource: Joi.string().valid('mobile_app', 'web_app', 'file_upload').default('mobile_app'),
+  // Common fields
   description: Joi.string().max(500).optional(),
   tags: Joi.array().items(Joi.string().max(50)).max(10).optional(),
   retentionPolicy: Joi.string().valid('7_days', '30_days', '1_year', '7_years', 'permanent').default('7_years')
@@ -24,7 +42,11 @@ const presignedUrlSchema = Joi.object({
 const uploadConfirmSchema = Joi.object({
   s3Key: Joi.string().required(),
   fileSize: Joi.number().integer().min(1).required(),
-  duration: Joi.number().min(0).optional(),
+  duration: Joi.number().min(0).optional(), // For audio
+  dimensions: Joi.object({ // For photos
+    width: Joi.number().integer().min(1).optional(),
+    height: Joi.number().integer().min(1).optional()
+  }).optional(),
   uploadedBy: Joi.string().required()
 });
 
@@ -51,50 +73,90 @@ router.post('/presigned-url', async (req, res) => {
       staffId,
       recordingType,
       recordingSource,
+      photoType,
+      photoSource,
       description,
       tags,
       retentionPolicy
     } = value;
 
+    // Determine if this is audio or photo
+    const isAudio = contentType.startsWith('audio/');
+    const isPhoto = contentType.startsWith('image/');
+
     // Generate unique S3 key
     const timestamp = Date.now();
     const fileExtension = fileName.split('.').pop();
     const uniqueId = uuidv4();
-    const s3Key = `audio_recordings/${visitId}/${timestamp}_${uniqueId}.${fileExtension}`;
+    const folder = isAudio ? 'audio_recordings' : 'photos';
+    const s3Key = `${folder}/${visitId}/${timestamp}_${uniqueId}.${fileExtension}`;
 
     // Generate presigned URL
     const { uploadUrl, fileUrl, expires } = generatePresignedUrl(s3Key, contentType);
 
-    // Create pending sound data record
-    const soundData = new SoundData({
-      fileName: `${timestamp}_${uniqueId}.${fileExtension}`,
-      originalFileName: fileName,
-      fileSize: 0, // Will be updated on confirmation
-      mimeType: contentType,
-      s3Key,
-      s3Bucket: S3_CONFIG.bucket,
-      s3Region: S3_CONFIG.region,
-      s3Url: fileUrl,
-      visitId,
-      patientId,
-      staffId,
-      recordingType,
-      recordingSource,
-      description,
-      tags: tags || [],
-      retentionPolicy,
-      processingStatus: 'pending',
-      uploadedBy: staffId || 'unknown',
-      uploadedAt: new Date()
-    });
+    let dataRecord;
+    let dataId;
 
-    await soundData.save();
+    if (isAudio) {
+      // Create pending sound data record
+      const soundData = new SoundData({
+        fileName: `${timestamp}_${uniqueId}.${fileExtension}`,
+        originalFileName: fileName,
+        fileSize: 0, // Will be updated on confirmation
+        mimeType: contentType,
+        s3Key,
+        s3Bucket: S3_CONFIG.bucket,
+        s3Region: S3_CONFIG.region,
+        s3Url: fileUrl,
+        visitId,
+        patientId,
+        staffId,
+        recordingType: recordingType || 'visit_note',
+        recordingSource: recordingSource || 'mobile_app',
+        description,
+        tags: tags || [],
+        retentionPolicy,
+        processingStatus: 'pending',
+        uploadedBy: staffId || 'unknown',
+        uploadedAt: new Date()
+      });
+
+      dataRecord = await soundData.save();
+      dataId = dataRecord._id;
+    } else if (isPhoto) {
+      // Create pending photo data record
+      const photoData = new PhotoData({
+        fileName: `${timestamp}_${uniqueId}.${fileExtension}`,
+        originalFileName: fileName,
+        fileSize: 0, // Will be updated on confirmation
+        mimeType: contentType,
+        s3Key,
+        s3Bucket: S3_CONFIG.bucket,
+        s3Region: S3_CONFIG.region,
+        s3Url: fileUrl,
+        visitId,
+        patientId,
+        staffId,
+        photoType: photoType || 'general',
+        photoSource: photoSource || 'mobile_app',
+        description,
+        tags: tags || [],
+        retentionPolicy,
+        processingStatus: 'pending',
+        uploadedBy: staffId || 'unknown',
+        uploadedAt: new Date()
+      });
+
+      dataRecord = await photoData.save();
+      dataId = dataRecord._id;
+    }
 
     logger.info(`Generated presigned URL for upload: ${s3Key}`, {
       visitId,
       patientId,
       fileName,
-      contentType
+      contentType,
+      type: isAudio ? 'audio' : 'photo'
     });
 
     res.status(200).json({
@@ -104,7 +166,8 @@ router.post('/presigned-url', async (req, res) => {
         fileUrl,
         s3Key,
         expires,
-        soundDataId: soundData._id
+        dataId,
+        type: isAudio ? 'audio' : 'photo'
       }
     });
 
@@ -132,40 +195,77 @@ router.post('/confirm', async (req, res) => {
       });
     }
 
-    const { s3Key, fileSize, duration, uploadedBy } = value;
+    const { s3Key, fileSize, duration, dimensions, uploadedBy } = value;
 
-    // Find and update sound data record
-    const soundData = await SoundData.findOne({ s3Key });
+    // Try to find in sound data first
+    let soundData = await SoundData.findOne({ s3Key });
+    let photoData = null;
+
     if (!soundData) {
+      // Try photo data
+      photoData = await PhotoData.findOne({ s3Key });
+    }
+
+    if (!soundData && !photoData) {
       return res.status(404).json({
-        error: 'Sound data record not found',
+        error: 'Data record not found',
         s3Key
       });
     }
 
-    // Update file metadata
-    soundData.fileSize = fileSize;
-    soundData.duration = duration;
-    soundData.uploadedBy = uploadedBy;
-    soundData.processingStatus = 'completed';
-    soundData.uploadedAt = new Date();
+    if (soundData) {
+      // Update sound file metadata
+      soundData.fileSize = fileSize;
+      soundData.duration = duration;
+      soundData.uploadedBy = uploadedBy;
+      soundData.processingStatus = 'completed';
+      soundData.uploadedAt = new Date();
 
-    await soundData.save();
+      await soundData.save();
 
-    logger.info(`Upload confirmed for: ${s3Key}`, {
-      fileSize,
-      duration,
-      uploadedBy
-    });
+      logger.info(`Audio upload confirmed for: ${s3Key}`, {
+        fileSize,
+        duration,
+        uploadedBy
+      });
 
-    res.status(200).json({
-      success: true,
-      data: {
-        soundDataId: soundData._id,
-        fileUrl: soundData.s3Url,
-        message: 'Upload confirmed successfully'
+      res.status(200).json({
+        success: true,
+        data: {
+          dataId: soundData._id,
+          fileUrl: soundData.s3Url,
+          type: 'audio',
+          message: 'Upload confirmed successfully'
+        }
+      });
+    } else if (photoData) {
+      // Update photo file metadata
+      photoData.fileSize = fileSize;
+      if (dimensions) {
+        photoData.dimensions = dimensions;
       }
-    });
+      photoData.uploadedBy = uploadedBy;
+      photoData.processingStatus = 'completed';
+      photoData.uploadedAt = new Date();
+
+      await photoData.save();
+
+      logger.info(`Photo upload confirmed for: ${s3Key}`, {
+        fileSize,
+        dimensions,
+        uploadedBy
+      });
+
+      res.status(200).json({
+        success: true,
+        data: {
+          dataId: photoData._id,
+          fileUrl: photoData.s3Url,
+          type: 'photo',
+          message: 'Upload confirmed successfully'
+        }
+      });
+    }
 
   } catch (error) {
     logger.error('Error confirming upload:', error);
@@ -182,8 +282,10 @@ router.post('/confirm', async (req, res) => {
  */
 router.get('/stats', async (req, res) => {
   try {
-    const stats = await SoundData.getStats();
-    const statusStats = await SoundData.aggregate([
+    const soundStats = await SoundData.getStats();
+    const photoStats = await PhotoData.getStats();
+    
+    const soundStatusStats = await SoundData.aggregate([
       {
         $group: {
           _id: '$processingStatus',
@@ -192,7 +294,7 @@ router.get('/stats', async (req, res) => {
       }
     ]);
 
-    const typeStats = await SoundData.aggregate([
+    const soundTypeStats = await SoundData.aggregate([
       {
         $group: {
           _id: '$recordingType',
@@ -201,17 +303,55 @@ router.get('/stats', async (req, res) => {
       }
     ]);
 
+    const photoStatusStats = await PhotoData.aggregate([
+      {
+        $group: {
+          _id: '$processingStatus',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const photoTypeStats = await PhotoData.aggregate([
+      {
+        $group: {
+          _id: '$photoType',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const soundOverall = soundStats[0] || {
+      totalFiles: 0,
+      totalSize: 0,
+      avgFileSize: 0,
+      avgDuration: 0
+    };
+
+    const photoOverall = photoStats[0] || {
+      totalFiles: 0,
+      totalSize: 0,
+      avgFileSize: 0
+    };
+
     res.status(200).json({
       success: true,
       data: {
-        overall: stats[0] || {
-          totalFiles: 0,
-          totalSize: 0,
-          avgFileSize: 0,
-          avgDuration: 0
+        overall: {
+          totalFiles: soundOverall.totalFiles + photoOverall.totalFiles,
+          totalSize: soundOverall.totalSize + photoOverall.totalSize,
+          avgFileSize: ((soundOverall.avgFileSize || 0) + (photoOverall.avgFileSize || 0)) / 2
         },
-        byStatus: statusStats,
-        byType: typeStats
+        audio: {
+          overall: soundOverall,
+          byStatus: soundStatusStats,
+          byType: soundTypeStats
+        },
+        photos: {
+          overall: photoOverall,
+          byStatus: photoStatusStats,
+          byType: photoTypeStats
+        }
       }
     });
 

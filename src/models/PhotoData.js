@@ -20,7 +20,7 @@ const photoDataSchema = new mongoose.Schema({
   mimeType: {
     type: String,
     required: true,
-    enum: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/heic']
+    enum: ['image/jpeg', 'image/png', 'image/jpg', 'image/webp']
   },
   dimensions: {
     width: {
@@ -53,10 +53,6 @@ const photoDataSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  thumbnailUrl: {
-    type: String,
-    default: null
-  },
 
   // Healthcare Context
   visitId: {
@@ -77,25 +73,13 @@ const photoDataSchema = new mongoose.Schema({
   // Photo Context
   photoType: {
     type: String,
-    enum: ['wound', 'medication', 'patient_condition', 'vital_signs', 'medical_device', 'room_condition', 'other'],
-    default: 'other'
+    enum: ['wound', 'skin_condition', 'medication', 'patient_id', 'general', 'other'],
+    default: 'general'
   },
   photoSource: {
     type: String,
-    enum: ['mobile_app', 'web_app', 'file_upload', 'camera'],
+    enum: ['mobile_app', 'web_app', 'file_upload'],
     default: 'mobile_app'
-  },
-  
-  // Medical Context
-  bodyPart: {
-    type: String,
-    trim: true,
-    default: null
-  },
-  laterality: {
-    type: String,
-    enum: ['left', 'right', 'bilateral', 'midline', 'not_applicable'],
-    default: 'not_applicable'
   },
   
   // Metadata
@@ -108,37 +92,36 @@ const photoDataSchema = new mongoose.Schema({
     trim: true,
     maxlength: 500
   },
-  clinicalNotes: {
-    type: String,
-    trim: true,
-    maxlength: 1000
-  },
-  
-  // EXIF Data (from camera)
-  exifData: {
-    dateTaken: {
-      type: Date,
-      default: null
-    },
-    cameraModel: {
+  location: {
+    bodyPart: {
       type: String,
       default: null
     },
-    gpsLocation: {
-      latitude: Number,
-      longitude: Number
+    notes: {
+      type: String,
+      default: null
     }
   },
-
+  
   // Processing Status
   processingStatus: {
     type: String,
     enum: ['pending', 'processing', 'completed', 'failed'],
     default: 'pending'
   },
-  thumbnailGenerated: {
-    type: Boolean,
-    default: false
+  analysis: {
+    labels: [{
+      name: String,
+      confidence: Number
+    }],
+    text: {
+      type: String,
+      default: null
+    },
+    processedAt: {
+      type: Date,
+      default: null
+    }
   },
 
   // Access Control
@@ -150,10 +133,6 @@ const photoDataSchema = new mongoose.Schema({
     type: String,
     enum: ['private', 'staff_only', 'patient_accessible', 'public'],
     default: 'staff_only'
-  },
-  hipaaCompliant: {
-    type: Boolean,
-    default: true
   },
 
   // Audit Trail
@@ -174,10 +153,6 @@ const photoDataSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
-  viewedBy: [{
-    staffId: String,
-    viewedAt: Date
-  }],
 
   // Retention Policy
   expiresAt: {
@@ -186,27 +161,8 @@ const photoDataSchema = new mongoose.Schema({
   },
   retentionPolicy: {
     type: String,
-    enum: ['30_days', '1_year', '7_years', 'permanent'],
+    enum: ['7_days', '30_days', '1_year', '7_years', 'permanent'],
     default: '7_years'
-  },
-
-  // Quality Metrics
-  quality: {
-    score: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: null
-    },
-    blurDetected: {
-      type: Boolean,
-      default: false
-    },
-    lightingQuality: {
-      type: String,
-      enum: ['poor', 'fair', 'good', 'excellent'],
-      default: null
-    }
   }
 }, {
   timestamps: true,
@@ -217,8 +173,8 @@ const photoDataSchema = new mongoose.Schema({
 // Indexes for performance
 photoDataSchema.index({ visitId: 1, patientId: 1 });
 photoDataSchema.index({ uploadedAt: -1 });
-photoDataSchema.index({ photoType: 1 });
 photoDataSchema.index({ processingStatus: 1 });
+photoDataSchema.index({ photoType: 1 });
 photoDataSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // Virtual for file URL
@@ -238,12 +194,12 @@ photoDataSchema.virtual('fileSizeFormatted').get(function() {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 });
 
-// Virtual for aspect ratio
-photoDataSchema.virtual('aspectRatio').get(function() {
+// Virtual for dimensions formatted
+photoDataSchema.virtual('dimensionsFormatted').get(function() {
   if (!this.dimensions || !this.dimensions.width || !this.dimensions.height) {
-    return null;
+    return 'Unknown';
   }
-  return (this.dimensions.width / this.dimensions.height).toFixed(2);
+  return `${this.dimensions.width}x${this.dimensions.height}`;
 });
 
 // Pre-save middleware to set expiration date based on retention policy
@@ -251,6 +207,9 @@ photoDataSchema.pre('save', function(next) {
   if (this.isNew && !this.expiresAt && this.retentionPolicy !== 'permanent') {
     const now = new Date();
     switch (this.retentionPolicy) {
+      case '7_days':
+        this.expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        break;
       case '30_days':
         this.expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
         break;
@@ -266,17 +225,9 @@ photoDataSchema.pre('save', function(next) {
 });
 
 // Instance method to increment access count
-photoDataSchema.methods.recordAccess = function(staffId) {
+photoDataSchema.methods.recordAccess = function() {
   this.accessCount += 1;
   this.lastAccessedAt = new Date();
-  
-  if (staffId) {
-    this.viewedBy.push({
-      staffId,
-      viewedAt: new Date()
-    });
-  }
-  
   return this.save();
 };
 
@@ -290,40 +241,18 @@ photoDataSchema.statics.findByPatient = function(patientId) {
   return this.find({ patientId }).sort({ uploadedAt: -1 });
 };
 
-// Static method to find by photo type
-photoDataSchema.statics.findByType = function(photoType) {
-  return this.find({ photoType }).sort({ uploadedAt: -1 });
-};
-
 // Static method to get statistics
 photoDataSchema.statics.getStats = function() {
   return this.aggregate([
     {
       $group: {
         _id: null,
-        totalPhotos: { $sum: 1 },
+        totalFiles: { $sum: 1 },
         totalSize: { $sum: '$fileSize' },
-        avgFileSize: { $avg: '$fileSize' },
-        photosByType: {
-          $push: {
-            type: '$photoType',
-            count: 1
-          }
-        }
+        avgFileSize: { $avg: '$fileSize' }
       }
     }
   ]);
-};
-
-// Static method to find photos needing review
-photoDataSchema.statics.findNeedingReview = function() {
-  return this.find({
-    $or: [
-      { 'quality.blurDetected': true },
-      { 'quality.lightingQuality': 'poor' },
-      { processingStatus: 'failed' }
-    ]
-  }).sort({ uploadedAt: -1 });
 };
 
 const PhotoData = mongoose.model('PhotoData', photoDataSchema);
