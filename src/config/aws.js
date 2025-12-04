@@ -5,19 +5,20 @@ const logger = require('../utils/logger');
 AWS.config.update({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION || 'us-east-1'
+  region: process.env.S3_BUCKET_REGION || process.env.AWS_REGION || 'eu-north-1'
 });
 
-// Create S3 instance
+// Create S3 instance with explicit region
 const s3 = new AWS.S3({
   apiVersion: '2006-03-01',
-  signatureVersion: 'v4'
+  signatureVersion: 'v4',
+  region: process.env.S3_BUCKET_REGION || process.env.AWS_REGION || 'eu-north-1'
 });
 
 // S3 Configuration
 const S3_CONFIG = {
   bucket: process.env.S3_BUCKET_NAME,
-  region: process.env.S3_BUCKET_REGION || process.env.AWS_REGION || 'us-east-1',
+  region: process.env.S3_BUCKET_REGION || process.env.AWS_REGION || 'eu-north-1',
   accessPointAlias: process.env.S3_ACCESS_POINT_ALIAS,
   customEndpoint: process.env.S3_CUSTOM_ENDPOINT,
   useAccessPointAlias: process.env.USE_ACCESS_POINT_ALIAS === 'true',
