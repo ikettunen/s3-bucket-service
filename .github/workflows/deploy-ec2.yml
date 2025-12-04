@@ -47,9 +47,9 @@ jobs:
         # Copy production environment as .env
         cp .env.production .env
         
-        # Replace AWS credentials with actual values from secrets
-        sed -i 's/PLACEHOLDER_AWS_ACCESS_KEY_ID/${{ secrets.AWS_ACCESS_KEY_ID }}/g' .env
-        sed -i 's/PLACEHOLDER_AWS_SECRET_ACCESS_KEY/${{ secrets.AWS_SECRET_ACCESS_KEY }}/g' .env
+        # Replace AWS credentials with actual values from secrets (using | as delimiter to handle special chars)
+        sed -i 's|PLACEHOLDER_AWS_ACCESS_KEY_ID|${{ secrets.AWS_ACCESS_KEY_ID }}|g' .env
+        sed -i 's|PLACEHOLDER_AWS_SECRET_ACCESS_KEY|${{ secrets.AWS_SECRET_ACCESS_KEY }}|g' .env
         
         # Add deployment timestamp (cross-platform compatible)
         {
