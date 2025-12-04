@@ -8,18 +8,8 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 
-// All allowed file types (audio + images)
-const ALLOWED_FILE_TYPES = [
-  'audio/wav',
-  'audio/mpeg',
-  'audio/mp4',
-  'audio/ogg',
-  'audio/webm',
-  'image/jpeg',
-  'image/png',
-  'image/jpg',
-  'image/webp'
-];
+// Get allowed file types from config (reads from .env)
+const ALLOWED_FILE_TYPES = S3_CONFIG.allowedFileTypes;
 
 // Validation schemas
 const presignedUrlSchema = Joi.object({
