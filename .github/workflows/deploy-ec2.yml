@@ -1,5 +1,6 @@
 # S3 Bucket Service deployment workflow for EC2 self-hosted runner
 # Deploys Node.js service to EC2 and restarts with PM2
+# Updated: 2025-12-04 - Fix region configuration issue (trigger redeploy)
 
 name: Deploy S3 Bucket Service to EC2
 
@@ -42,6 +43,23 @@ jobs:
         
         # Install dependencies in target directory
         cd ~/s3-bucket-service
+        
+        # Copy production environment as .env
+        cp .env.production .env
+        
+        # Replace AWS credentials with actual values from secrets
+        sed -i 's/PLACEHOLDER_AWS_ACCESS_KEY_ID/${{ secrets.AWS_ACCESS_KEY_ID }}/g' .env
+        sed -i 's/PLACEHOLDER_AWS_SECRET_ACCESS_KEY/${{ secrets.AWS_SECRET_ACCESS_KEY }}/g' .env
+        
+        # Add deployment timestamp (cross-platform compatible)
+        {
+          echo ""
+          echo "# Last deployed: $(date -u +'%Y-%m-%d %H:%M:%S UTC') via GitHub Actions"
+          echo "# Deployment ID: $GITHUB_RUN_ID"
+          echo "# Commit SHA: $GITHUB_SHA"
+          echo "# Commit Message: $(git log -1 --pretty=format:'%s' $GITHUB_SHA 2>/dev/null || echo 'No commit message available')"
+        } >> .env
+        
         npm install --production
         
         echo "Deployed to ~/s3-bucket-service"

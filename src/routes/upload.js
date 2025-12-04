@@ -12,6 +12,7 @@ const router = express.Router();
 const ALLOWED_FILE_TYPES = [
   'audio/wav',
   'audio/mpeg',
+  'audio/mp4',
   'audio/ogg',
   'audio/webm',
   'image/jpeg',
@@ -84,12 +85,20 @@ router.post('/presigned-url', async (req, res) => {
     const isAudio = contentType.startsWith('audio/');
     const isPhoto = contentType.startsWith('image/');
 
-    // Generate unique S3 key
+    // Generate unique S3 key with human-readable naming
     const timestamp = Date.now();
     const fileExtension = fileName.split('.').pop();
     const uniqueId = uuidv4();
     const folder = isAudio ? 'audio_recordings' : 'photos';
-    const s3Key = `${folder}/${visitId}/${timestamp}_${uniqueId}.${fileExtension}`;
+    
+    // Create human-readable filename: visit_audio_YYYYMMDD_HHMMSS.ext or visit_photo_YYYYMMDD_HHMMSS.ext
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
+    const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, ''); // HHMMSS
+    const fileType = isAudio ? 'audio' : 'photo';
+    const humanReadableFileName = `visit_${fileType}_${dateStr}_${timeStr}.${fileExtension}`;
+    
+    const s3Key = `${folder}/${visitId}/${humanReadableFileName}`;
 
     // Generate presigned URL
     const { uploadUrl, fileUrl, expires } = generatePresignedUrl(s3Key, contentType);
@@ -100,7 +109,7 @@ router.post('/presigned-url', async (req, res) => {
     if (isAudio) {
       // Create pending sound data record
       const soundData = new SoundData({
-        fileName: `${timestamp}_${uniqueId}.${fileExtension}`,
+        fileName: humanReadableFileName,
         originalFileName: fileName,
         fileSize: 0, // Will be updated on confirmation
         mimeType: contentType,
@@ -126,7 +135,7 @@ router.post('/presigned-url', async (req, res) => {
     } else if (isPhoto) {
       // Create pending photo data record
       const photoData = new PhotoData({
-        fileName: `${timestamp}_${uniqueId}.${fileExtension}`,
+        fileName: humanReadableFileName,
         originalFileName: fileName,
         fileSize: 0, // Will be updated on confirmation
         mimeType: contentType,

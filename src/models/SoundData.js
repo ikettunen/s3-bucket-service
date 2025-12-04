@@ -20,7 +20,7 @@ const soundDataSchema = new mongoose.Schema({
   mimeType: {
     type: String,
     required: true,
-    enum: ['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/webm']
+    enum: ['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/webm']
   },
   duration: {
     type: Number, // Duration in seconds
